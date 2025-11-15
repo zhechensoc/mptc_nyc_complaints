@@ -1,6 +1,6 @@
 ---
 title: "Problem Set 12: NYC Complaints Data"
-author: "<PUT YOUR NAME HERE>"
+author: "Zhe Chen"
 date: "`r Sys.Date()`"
 format: html
 ---
@@ -25,8 +25,6 @@ options(tigris_use_cache = TRUE)
 ## Install the data package:
 ## remotes::install_github("kjhealy/nycomplaints")
 library(nycomplaints)
-
-
 ```
 
 # The dataset
@@ -43,37 +41,88 @@ Read the documentation before working with the data.
 nycomplaints
 ```
 
-
 ## Two useful tables
 
 ```{r}
 nyc_zips
 ```
 
-
 ```{r}
 census_vars
 ```
 
-
-## 1. Create a zipcode-level base map
+## Create a zipcode-level base map
 
 The `nyzip_demog` table has demographic data for New York City by zip code, but it does not have map data (i.e. the polygon geometry). Use `get_acs()` from the `tidycensus` package to get the spatial data by ZCTA.
 
 Hints:
 
-- You should specify a year. Choose 2019.
-- The zip code tabulation area ("zcta") geography is what you want.
-- You only want data for New York State (NY).
-- You have to ask the Census API for data for some variable by the geography you want. You can use any variable you want, or more than one. Some sample ones are given in `acs_vars`.
-- If you get more than one variable, consider reshaping/pivoting the data to put those variables in columns. If you pivot the data you may find that you have to convert it to a tibble first and that while the result still has `geometry` column it is not recognized as an `sf` object. Look at `sf::st_as_sf()` to convert it back.
-- If you get data for New York State, you will get all the zip codes in the state. You only want data for the zip codes that are in NYC. But you know what those are.
+-   You should specify a year. Choose 2019.
 
+-   The zip code tabulation area ("zcta") geography is what you want.
 
+-   You only want data for New York State (NY).
+
+-   You have to ask the Census API for data for some variable by the geography you want. You can use any variable you want, or more than one. Some sample ones are given in `acs_vars`.
+
+-   If you get more than one variable, consider reshaping/pivoting the data to put those variables in columns. If you pivot the data you may find that you have to convert it to a tibble first and that while the result still has `geometry` column it is not recognized as an `sf` object. Look at `sf::st_as_sf()` to convert it back.
+
+-   If you get data for New York State, you will get all the zip codes in the state. You only want data for the zip codes that are in NYC. But you know what those are.
 
 Additionally, this may be a good time to think about dividing your project up in to more than one file. For example, you could have one R script that does the work above to produce an object you could save, or that you source into this file. (See `?source`.)
 
+> Yes, use `census_vars` (which is in nycomplaints) as a starting point to get demographic data by zip code (geography is "`zcta`") via `get_acs()` as well.
 
+> The `census_vars` tibble gives you the names of some variables you might ask the Census for at the `zcta` level.
+
+```{r}
+# nyzip_demog
+nyzip_demog <- get_acs(
+  state = "NY",
+  geography = "zcta",
+  variables = c(population = "B01001_001",
+                white_alone = "B02001_002",
+                black_alone = "B02001_003",
+                asian_alone = "B02001_005",
+                two_or_more_races = "B02001_008",
+                hispanic = "B03003_001",
+                nonhispanic_white = "B03002_003",
+                nonhispanic_black = "B03002_004",
+                med_hhinc = "B19013_001"),
+  geometry = TRUE,
+  year = 2019) |>
+  select(-c(NAME, moe)) |>
+  filter(GEOID %in% nyc_zips$zip) |>
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  sf::st_as_sf()
+```
+
+```{r}
+# total population, population of age>25, with bachelor's degrees(age>25), and 
+# with PhD degrees (age>25)
+nys <- get_acs(
+  state = "NY",
+  geography = "zcta",
+  variables = c(pop_total = "B01001_001",
+                pop_25 = "B15003_001",
+                pop_ba = "B15003_022",
+                pop_phd = "B15003_025",
+                med_hhinc = "B19013_001"),
+  geometry = TRUE,
+  year = 2019
+)
+
+# filter data of NYC
+nyc_long <- nys |>
+  select(-c(NAME, moe)) |>
+  filter(GEOID %in% nyc_zips$zip)
+
+# wide format
+nyc <- nyc_long |>
+  pivot_wider(names_from = variable, values_from = estimate) |>
+  filter(pop_total != 0) |>
+  sf::st_as_sf()
+```
 
 ## Additional variables
 
@@ -84,35 +133,280 @@ The ACS has a lot of data. Consider the *very* long list of variables here:
 acs_vars <- load_variables(year = 2019, dataset = "acs5")
 ```
 
-
 ## Other information
 
-_Hint:_ You can use `st_drop_geometry()` to change a spatial table into a simple tibble:
+*Hint:* You can use `st_drop_geometry()` to change a spatial table into a simple tibble:
 
 ```{r}
 ## See how the `geometry` column disappears
-zip_data |>
+nyc |>
   st_drop_geometry()
 ```
-
 
 # Things to do
 
 ## 1. Briefly Describe the Dataset
 
-- Summarize the `nycomplaints` tibble in a way you think is informative to you.
+> Summarize the `nycomplaints` tibble in a way you think is informative to you.
+
+```{r}
+nycomplaints
+
+summary(nycomplaints)
+
+str(nycomplaints)
+```
 
 ## 2 Look at each column/variable in a little more detail
 
-- Explore the basic structure of the data, by e.g. writing code to summarize the variables or investigate aspects of them that seem interesting. You can also create some initial rough exploratory plots if you like, in addition to tables or other summaries. As you go, explain here what it is you are doing and why.
+> Explore the basic structure of the data, by e.g. writing code to summarize the variables or investigate aspects of them that seem interesting. You can also create some initial rough exploratory plots if you like, in addition to tables or other summaries. As you go, explain here what it is you are doing and why.
+
+### summarize by geographic units
+
+-   by borough
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(borough)) |>   
+  group_by(borough) |>   
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(borough)) |>   
+  group_by(borough) |>   
+  summarize(total = n()) |>   
+  arrange(desc(total)) |>
+  ggplot(aes(x = total, y = reorder(borough, total))) + 
+  geom_col()
+```
+
+Brooklyn has the most complaints, Bronx has the least complaints.
+
+-   by city
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(city)) |>   
+  group_by(city) |>   
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(city)) |> 
+  filter(city %nin% c("Brooklyn", "Manhattan", "Queens", "Staten Island", "Bronx", "New York")) |>
+  group_by(city) |>   
+  summarize(total = n()) |>
+  slice_max(total, n = 10) |>
+  arrange(desc(total)) |>
+  ggplot(aes(x = total, y = reorder(city, total))) + 
+  geom_col()
+```
+
+At the city level, Woodside, Flushing, and Long Island City have the most complaints.
+
+### summarize by types
+
+-   by complaint type
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(complaint_type)) |>   
+  group_by(complaint_type) |>   
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(complaint_type)) |>   
+  group_by(complaint_type) |>   
+  summarize(total = n()) |>   
+  slice_max(total, n = 20) |>
+  ggplot(aes(x = total, y = reorder(complaint_type, total))) + 
+  geom_col()
+```
+
+Housing and buildings, transportation, and finance are the most frequently complained types.
+
+-   by descriptor
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(descriptor)) |>   
+  group_by(descriptor) |>   
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(descriptor)) |>   
+  group_by(descriptor) |>   
+  summarize(total = n()) |>   
+  slice_max(total, n = 20) |>
+  ggplot(aes(x = total, y = reorder(descriptor, total))) + 
+  geom_col()
+```
+
+Seeking an affordable housing/apartment, tax Preparation assist, and U.S. citizenship are the most frequently complained.
+
+### summarize by date
+
+-   by year
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(opendate)) |>
+  mutate(year = year(opendate)) |>
+  group_by(year) |>
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(opendate)) |>
+  mutate(year = year(opendate)) |>
+  group_by(year) |>
+  summarize(total = n()) |> 
+  filter(year %in% 2016:2023) |>
+  ggplot(aes(x = year, y = total)) + 
+  geom_col() + 
+  scale_x_continuous(breaks = 2016:2023)
+```
+
+The total number of complaints declined from 2016 to 2021, but rose from 2021 to 2023.
+
+-   by month
+
+```{r}
+nycomplaints |>   
+  filter(!is.na(opendate)) |>
+  mutate(month = month(opendate)) |>
+  group_by(month) |>
+  summarize(total = n()) |>   
+  arrange(desc(total)) 
+
+nycomplaints |>   
+  filter(!is.na(opendate)) |>
+  mutate(month = month(opendate)) |>
+  group_by(month) |>
+  summarize(total = n()) |>   
+  ggplot(aes(x = month, y = total)) + 
+  geom_col() + 
+  scale_x_continuous(breaks = 1:12, labels = month.abb)
+```
+
+Summer has the most complaints.
 
 ## 3. Make some plots or maps
 
-- Following on from the tabular summarize, make some plots that you think show something interesting about the data. Make sure they look presentable and effective to you. Make a note about why you're doing each one. If you like, merge in data from elsewhere (e.g. from Census variables).
+> Following on from the tabular summarize, make some plots that you think show something interesting about the data. Make sure they look presentable and effective to you. Make a note about why you're doing each one. If you like, merge in data from elsewhere (e.g. from Census variables).
 
+-   summarize (count) by zip
+
+```{r}
+zip_count <- nycomplaints |>   
+  filter(!is.na(zip)) |>
+  filter(zip %in% nyc_zips$zip) |>
+  group_by(zip) |>
+  summarize(total = n()) |>   
+  arrange(desc(total)) |>
+  mutate(GEOID = zip)
+```
+
+-   merge with ACS data
+
+```{r}
+nyc_full <- 
+  left_join(nyc, zip_count, by = "GEOID") |>
+  rename(n_complaints = total)
+```
+
+-   distribution of complaints
+
+```{r}
+nyc_full |>
+  mutate(rate_complaints = n_complaints / pop_total) |>
+  ggplot(aes(fill = rate_complaints * 1000)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(option = "turbo") + 
+  labs(title = "Complaint rates in NYC",
+       subtitle = "2019 American Community Survey",
+       fill = "Complaints per 1,000 people")
+```
+
+Staten Island has a much higher rate of complaints.
+
+- distribution of college graduates
+
+```{r}
+nyc_full |>
+  mutate(rate_ba = pop_ba / pop_25) |>
+  ggplot(aes(fill = rate_ba * 100 )) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(option = "turbo") + 
+  labs(title = "Colleges graduates in NYC",
+       subtitle = "2019 American Community Survey",
+       fill = "Percentage of college graduates %")
+```
+
+College graduates in NYC are concentrated in Manhattan's downtown and midtown, and 
+regions close to Manhattan in Brooklyn and Queens.  
+
+- distribution of PhDs
+
+```{r}
+nyc_full |>
+  mutate(rate_phd = pop_phd / pop_25) |>
+  ggplot(aes(fill = rate_phd * 100 )) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(option = "turbo") + 
+  labs(title = "PhDs in NYC",
+       subtitle = "2019 American Community Survey",
+       fill = "Percentage of PhDs %")
+```
+
+PhDs in NYC are concentrated in Manhattan's midtown and Roosevelt Island.  
 
 ## 4. Try to make one properly-polished plot or map
 
-- a. _Either_ choose one of the plots you've already made _or_ create a new plot or map using the data. Work it up to something more finished. Aim for something that is both properly informative and as polished as you can make it.
+-   
 
-- b. Try saving this plot or map using `ggsave()`. Create it as a PNG or PDF file. Make its dimensions (width and height) the right size for what you draw.
+    a.  *Either* choose one of the plots you've already made *or* create a new plot or map using the data. Work it up to something more finished. Aim for something that is both properly informative and as polished as you can make it.
+
+Distribution of complaints and household income median.
+
+```{r}
+library(patchwork)
+
+p1 <- nyc_full |>
+  mutate(rate_complaints = n_complaints / pop_total) |>
+  ggplot(aes(fill = rate_complaints * 1000)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(option = "turbo") + 
+  labs(title = "Complaint rates in NYC",
+       subtitle = "2019 American Community Survey",
+       fill = "Complaints per 1,000 people")
+
+p2 <- nyc_full |>
+  ggplot(aes(fill = med_hhinc / 1000)) +
+  geom_sf(color = NA) +
+  scale_fill_viridis_c(option = "turbo") + 
+  labs(title = "Household income median in NYC",
+       subtitle = "2019 American Community Survey",
+       fill = "Household income median (1,000 USD)")
+
+p3 <- p1 + p2
+
+p3
+```
+
+    b.  Try saving this plot or map using `ggsave()`. Create it as a PNG or PDF file. Make its dimensions (width and height) the right size for what you draw.
+
+```{r}
+library(here)
+ggsave(
+  filename = here("figures", "plot1.png"),
+  plot = p3,
+  width = 16,
+  height = 9,
+  dpi = 300)
+```
+
+
